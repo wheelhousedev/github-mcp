@@ -24,13 +24,31 @@ export class CreateRepoService extends BaseGitHubService {
     try {
       // Validate required parameters
       if (!params.org || !params.name) {
-        throw new McpError(
-          ErrorCode.InternalError,
-          'Organization and name are required',
+        this.handleError(
+          new Error('Organization and name are required'),
           {
-            action: 'create_repository'
+            action: 'create_repository',
+            attempted_operation: 'create_repo'
           }
         );
+        return {} as GitHubRepo; // This line will never be reached
+      }
+
+      // Validate input types
+      if (typeof params.org !== 'string' || typeof params.name !== 'string') {
+        this.handleError(
+          new Error('Invalid input types for organization or name'),
+          {
+            action: 'create_repository',
+            attempted_operation: 'create_repo',
+            organization: params.org,
+            repository: {
+              org: params.org,
+              name: params.name
+            }
+          }
+        );
+        return {} as GitHubRepo; // This line will never be reached
       }
 
       this.logOperation('create_repository', {
@@ -75,7 +93,17 @@ export class CreateRepoService extends BaseGitHubService {
 
       return result;
     } catch (error: any) {
-      const errorDetails = {
+      const context: {
+        action: string;
+        attempted_operation: string;
+        organization?: string;
+        repository?: {
+          org: string;
+          name: string;
+        };
+        rate_limit?: Record<string, string>;
+        required_scopes?: string[];
+      } = {
         action: 'create_repository',
         attempted_operation: 'create_repo',
         organization: params?.org,
@@ -85,46 +113,19 @@ export class CreateRepoService extends BaseGitHubService {
         }
       };
 
-      if (error.status === 403 && error.message.includes('rate limit')) {
-        const rateLimitInfo = this.getRateLimitInfo(error.response?.headers || {});
-        throw new McpError(
-          ErrorCode.InternalError,
-          'API rate limit exceeded',
-          {
-            ...errorDetails,
-            rate_limit: rateLimitInfo
-          }
-        );
+      // Handle authentication errors
+      if (error.message?.includes('Bad credentials')) {
+        context.attempted_operation = 'verify_auth';
+        context.required_scopes = ['repo'];
       }
 
-      // For network errors
-      if (error.message.includes('Network')) {
-        throw new McpError(
-          ErrorCode.InternalError,
-          'Network error',
-          errorDetails
-        );
+      // Handle rate limit errors
+      if (error.status === 403 && error.message?.includes('rate limit')) {
+        context.rate_limit = this.getRateLimitInfo(error.response?.headers || {});
       }
 
-      // For validation errors
-      if (!params.org || !params.name) {
-        throw new McpError(
-          ErrorCode.InternalError,
-          'Organization and name are required',
-          errorDetails
-        );
-      }
-
-      // For other GitHub API errors
-      if (error instanceof McpError) {
-        throw error;
-      }
-
-      throw new McpError(
-        ErrorCode.InternalError,
-        error.message || 'Failed to create repository',
-        errorDetails
-      );
+      this.handleError(error, context);
+      return {} as GitHubRepo; // This line will never be reached
     }
   }
 }

@@ -21,13 +21,14 @@ export class UpdateRepoSettingsService extends BaseGitHubService {
 
   async execute(params: UpdateRepoSettingsInput): Promise<GitHubRepoSettings> {
     try {
-      // Validate required parameters
+      // Validate required parameters first
       if (!params.org || !params.repo || !params.settings) {
         throw new McpError(
           ErrorCode.InternalError,
           'Organization, repository, and settings are required',
           {
-            action: 'update_repository_settings'
+            action: 'update_repository_settings',
+            attempted_operation: 'validate_input'
           }
         );
       }
@@ -53,6 +54,7 @@ export class UpdateRepoSettingsService extends BaseGitHubService {
           `Invalid settings provided: ${invalidSettings.join(', ')}`,
           {
             action: 'update_repository_settings',
+            attempted_operation: 'validate_input',
             organization: params.org,
             repository: {
               org: params.org,
@@ -70,6 +72,7 @@ export class UpdateRepoSettingsService extends BaseGitHubService {
             `Setting '${key}' must be a boolean`,
             {
               action: 'update_repository_settings',
+              attempted_operation: 'validate_input',
               organization: params.org,
               repository: {
                 org: params.org,
@@ -103,14 +106,7 @@ export class UpdateRepoSettingsService extends BaseGitHubService {
 
       const result: GitHubRepoSettings = {
         name: response.data.name,
-        settings: {
-          has_issues: response.data.has_issues ?? false,
-          has_projects: response.data.has_projects ?? false,
-          has_wiki: response.data.has_wiki ?? false,
-          allow_squash_merge: response.data.allow_squash_merge ?? false,
-          allow_merge_commit: response.data.allow_merge_commit ?? false,
-          allow_rebase_merge: response.data.allow_rebase_merge ?? false
-        }
+        settings: params.settings // Use the input settings as they were validated
       };
 
       this.logger.info('Successfully updated repository settings', {
@@ -121,57 +117,59 @@ export class UpdateRepoSettingsService extends BaseGitHubService {
 
       return result;
     } catch (error: any) {
-      const errorDetails = {
+      // For authentication errors from verifyAccess
+      if (error instanceof McpError) {
+        // Preserve all McpError details
+        throw error;
+      }
+
+      // Base error context for all other errors
+      const errorContext = {
         action: 'update_repository_settings',
         attempted_operation: 'update_repo_settings',
-        organization: params?.org,
-        repository: params?.org && params?.repo ? {
+        organization: params.org,
+        repository: {
           org: params.org,
           repo: params.repo
-        } : undefined
+        }
       };
 
+      // Handle rate limit errors
       if (error.status === 403 && error.message.includes('rate limit')) {
         const rateLimitInfo = this.getRateLimitInfo(error.response?.headers || {});
         throw new McpError(
           ErrorCode.InternalError,
           'API rate limit exceeded',
           {
-            ...errorDetails,
+            ...errorContext,
             rate_limit: rateLimitInfo
           }
         );
       }
 
-      // For network errors
+      // Handle repository not found errors
+      if (error.status === 404) {
+        throw new McpError(
+          ErrorCode.InternalError,
+          'Not Found',
+          errorContext
+        );
+      }
+
+      // Handle network errors
       if (error.message.includes('Network')) {
         throw new McpError(
           ErrorCode.InternalError,
           'Network error',
-          errorDetails
+          errorContext
         );
       }
 
-      // For validation errors
-      if (!params.org || !params.repo || !params.settings) {
-        throw new McpError(
-          ErrorCode.InternalError,
-          'Organization, repository, and settings are required',
-          {
-            action: 'update_repository_settings'
-          }
-        );
-      }
-
-      // For other GitHub API errors
-      if (error instanceof McpError) {
-        throw error;
-      }
-
+      // For other errors
       throw new McpError(
         ErrorCode.InternalError,
         error.message || 'Failed to update repository settings',
-        errorDetails
+        errorContext
       );
     }
   }

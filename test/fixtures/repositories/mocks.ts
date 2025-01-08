@@ -7,10 +7,7 @@ export const createTestRepo = (name: string, org: string): GitHubRepo => ({
   description: `Test repo ${name}`,
   private: false,
   url: `https://api.github.com/repos/${org}/${name}`,
-  clone_url: `https://github.com/${org}/${name}.git`,
-  html_url: `https://github.com/${org}/${name}`,
-  visibility: 'public',
-  created_at: '2025-01-06T23:15:57Z'
+  clone_url: `https://github.com/${org}/${name}.git`
 });
 
 // Common Test Responses

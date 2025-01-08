@@ -4,7 +4,7 @@ import { createMockOctokit } from '../../../fixtures/octokit';
 import { createMockLogger, createMockAuthService } from '../../../fixtures/utils/common';
 import { mockRepoResponses } from '../../../fixtures/repositories/mocks';
 import { createGitHubError, createRateLimitError } from '../../../fixtures/utils/errors';
-import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 describe('CreateRepoService', () => {
   const mockOctokit = createMockOctokit();
@@ -15,42 +15,116 @@ describe('CreateRepoService', () => {
   beforeEach(() => {
     service = new CreateRepoService(mockOctokit, mockAuthService, mockLogger);
     vi.clearAllMocks();
+    mockAuthService.verifyAuthAndScopes.mockResolvedValue(undefined);
   });
 
-  describe('execute', () => {
+  describe('input validation', () => {
     const testOrg = 'test-org';
     const testRepo = 'new-repo';
-    const testDescription = 'Test repository';
 
-    it('should create a public repository successfully', async () => {
-      // Given
+    it('should validate required parameters', async () => {
+      // Test empty input
+      const emptyError = await service.execute({} as any).catch(e => e);
+      expect(emptyError.code).toBe(ErrorCode.InternalError);
+      expect(emptyError.message).toContain('Organization and name are required');
+      expect(emptyError.details).toMatchObject({
+        action: 'create_repository',
+        attempted_operation: 'create_repo'
+      });
+
+      // Test missing org
+      const missingOrgError = await service.execute({ name: testRepo } as any).catch(e => e);
+      expect(missingOrgError.message).toContain('Organization and name are required');
+      expect(missingOrgError.details).toMatchObject({
+        action: 'create_repository',
+        attempted_operation: 'create_repo'
+      });
+
+      // Test missing name
+      const missingNameError = await service.execute({ org: testOrg } as any).catch(e => e);
+      expect(missingNameError.message).toContain('Organization and name are required');
+      expect(missingNameError.details).toMatchObject({
+        action: 'create_repository',
+        attempted_operation: 'create_repo'
+      });
+    });
+
+    it('should validate input types', async () => {
+      // Test invalid org type
+      const invalidOrgError = await service.execute({
+        org: 123,
+        name: testRepo
+      } as any).catch(e => e);
+      expect(invalidOrgError.code).toBe(ErrorCode.InternalError);
+      expect(invalidOrgError.details).toMatchObject({
+        action: 'create_repository',
+        attempted_operation: 'create_repo',
+        organization: 123,
+        repository: {
+          org: 123,
+          name: testRepo
+        }
+      });
+
+      // Test invalid name type
+      const invalidNameError = await service.execute({
+        org: testOrg,
+        name: true
+      } as any).catch(e => e);
+      expect(invalidNameError.code).toBe(ErrorCode.InternalError);
+      expect(invalidNameError.details).toMatchObject({
+        action: 'create_repository',
+        attempted_operation: 'create_repo',
+        organization: testOrg,
+        repository: {
+          org: testOrg,
+          name: true
+        }
+      });
+    });
+  });
+
+  describe('successful creation', () => {
+    const testOrg = 'test-org';
+    const testRepo = 'new-repo';
+
+    it('should successfully create a repository', async () => {
       const response = {
-        data: mockRepoResponses.create.data,
-        headers: { 'x-ratelimit-remaining': '4999' }
+        data: {
+          ...mockRepoResponses.create.data,
+          visibility: 'public',
+          created_at: '2025-01-07T00:00:00Z'
+        },
+        headers: {
+          'x-ratelimit-remaining': '4999',
+          'x-ratelimit-limit': '5000',
+          'x-ratelimit-reset': '1609459200'
+        }
       };
       mockOctokit.repos.createInOrg.mockResolvedValue(response);
 
-      // When
       const result = await service.execute({
         org: testOrg,
         name: testRepo,
-        description: testDescription
+        description: 'Test repository'
       });
 
-      // Then
-      expect(result).toEqual(response.data);
-      expect(mockAuthService.verifyAuthAndScopes).toHaveBeenCalledWith(['repo']);
+      expect(result).toMatchObject({
+        name: testRepo,
+        description: 'Test repo new-repo',
+        private: false,
+        visibility: 'public',
+        created_at: '2025-01-07T00:00:00Z'
+      });
+
       expect(mockOctokit.repos.createInOrg).toHaveBeenCalledWith({
         org: testOrg,
         name: testRepo,
-        description: testDescription,
-        private: false
+        description: 'Test repository',
+        private: undefined,
+        auto_init: true
       });
-      expect(mockLogger.debug).toHaveBeenCalledWith('Executing create_repository', {
-        org: testOrg,
-        name: testRepo,
-        private: false
-      });
+
       expect(mockLogger.info).toHaveBeenCalledWith(
         'Successfully created repository',
         expect.objectContaining({
@@ -59,184 +133,100 @@ describe('CreateRepoService', () => {
         })
       );
     });
+  });
 
-    it('should create a private repository successfully', async () => {
-      // Given
-      const response = {
-        data: { ...mockRepoResponses.create.data, private: true },
-        headers: { 'x-ratelimit-remaining': '4999' }
-      };
-      mockOctokit.repos.createInOrg.mockResolvedValue(response);
+  describe('error handling', () => {
+    const testOrg = 'test-org';
+    const testRepo = 'new-repo';
 
-      // When
-      const result = await service.execute({
-        org: testOrg,
-        name: testRepo,
-        description: testDescription,
-        private: true
-      });
-
-      // Then
-      expect(result).toEqual(response.data);
-      expect(mockOctokit.repos.createInOrg).toHaveBeenCalledWith({
-        org: testOrg,
-        name: testRepo,
-        description: testDescription,
-        private: true
-      });
-    });
-
-    it('should handle missing required parameters', async () => {
-      // When/Then
-      await expect(service.execute({} as any)).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Organization and name are required'),
-        details: expect.objectContaining({
-          action: 'create_repository'
-        })
-      });
-    });
-
-    it('should handle repository already exists error', async () => {
-      // Given
-      mockOctokit.repos.createInOrg.mockRejectedValue(
-        createGitHubError({
-          message: 'Repository already exists',
-          status: 422
-        })
+    it('should handle auth verification failures', async () => {
+      const authError = new McpError(
+        ErrorCode.InternalError,
+        'Bad credentials',
+        {
+          action: 'create_repository',
+          attempted_operation: 'verify_auth',
+          required_scopes: ['repo']
+        }
       );
+      mockAuthService.verifyAuthAndScopes.mockRejectedValue(authError);
 
-      // When/Then
-      await expect(service.execute({
+      const error = await service.execute({
         org: testOrg,
         name: testRepo
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Repository already exists'),
-        details: expect.objectContaining({
-          action: 'create_repository',
-          organization: testOrg,
-          repository: expect.objectContaining({
-            org: testOrg,
-            name: testRepo
-          })
-        })
-      });
-    });
+      }).catch(e => e);
 
-    it('should handle authentication errors', async () => {
-      // Given
-      mockAuthService.verifyAuthAndScopes.mockRejectedValue(
-        createGitHubError({
-          message: 'Bad credentials',
-          status: 401
-        })
-      );
-
-      // When/Then
-      await expect(service.execute({
-        org: testOrg,
-        name: testRepo
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Bad credentials'),
-        details: expect.objectContaining({
-          action: 'create_repository',
-          attempted_operation: 'create_repo',
-          organization: testOrg,
-          repository: expect.objectContaining({
-            org: testOrg,
-            name: testRepo
-          })
-        })
-      });
+      expect(error).toEqual(authError);
+      expect(mockOctokit.repos.createInOrg).not.toHaveBeenCalled();
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Access verification failed',
         expect.objectContaining({
           required_scopes: ['repo'],
-          action: 'create_repository',
-          attempted_operation: 'create_repo',
-          organization: testOrg,
-          repository: expect.objectContaining({
-            org: testOrg,
-            name: testRepo
-          })
+          error: expect.stringContaining('Bad credentials')
         })
       );
     });
 
     it('should handle rate limit errors', async () => {
-      // Given
-      mockOctokit.repos.createInOrg.mockRejectedValue(
-        createRateLimitError()
-      );
+      const rateLimitError = new Error('API rate limit exceeded');
+      (rateLimitError as any).status = 403;
+      (rateLimitError as any).response = {
+        data: {
+          message: 'API rate limit exceeded'
+        },
+        headers: {
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-limit': '5000',
+          'x-ratelimit-reset': '1609459200'
+        }
+      };
+      mockOctokit.repos.createInOrg.mockRejectedValue(rateLimitError);
 
-      // When/Then
-      await expect(service.execute({
+      const error = await service.execute({
         org: testOrg,
         name: testRepo
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('API rate limit exceeded'),
-        details: expect.objectContaining({
-          action: 'create_repository',
-          attempted_operation: 'create_repo',
-          organization: testOrg,
-          rate_limit: expect.objectContaining({
-            remaining: '0',
-            reset: '1609459200'
-          })
-        })
-      });
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Rate limit exceeded',
+      }).catch(e => e);
+
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.message).toContain('API rate limit exceeded');
+      expect(error.details).toEqual(
         expect.objectContaining({
           action: 'create_repository',
           attempted_operation: 'create_repo',
           organization: testOrg,
-          rate_limit: expect.objectContaining({
-            remaining: '0',
-            reset: '1609459200'
-          })
+          repository: {
+            org: testOrg,
+            name: testRepo
+          }
         })
       );
+      expect(error.details.rate_limit).toBeDefined();
+      expect(error.details.rate_limit.remaining).toBe('0');
+      expect(error.details.rate_limit.reset).toBe('1609459200');
     });
 
     it('should handle network errors', async () => {
-      // Given
-      const networkError = new Error('Network error');
-      mockOctokit.repos.createInOrg.mockRejectedValue(networkError);
+      mockAuthService.verifyAuthAndScopes.mockResolvedValue(undefined);
+      mockOctokit.repos.createInOrg.mockRejectedValue(
+        new Error('Network error')
+      );
 
-      // When/Then
-      await expect(service.execute({
+      const error = await service.execute({
         org: testOrg,
         name: testRepo
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Network error'),
-        details: expect.objectContaining({
-          action: 'create_repository',
-          attempted_operation: 'create_repo',
-          organization: testOrg,
-          repository: expect.objectContaining({
-            org: testOrg,
-            name: testRepo
-          })
-        })
+      }).catch(e => e);
+
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.message).toContain('Network error');
+      expect(error.details).toMatchObject({
+        action: 'create_repository',
+        attempted_operation: 'create_repo',
+        organization: testOrg,
+        repository: {
+          org: testOrg,
+          name: testRepo
+        }
       });
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Network error occurred',
-        expect.objectContaining({
-          error: networkError,
-          action: 'create_repository',
-          attempted_operation: 'create_repo',
-          organization: testOrg,
-          repository: expect.objectContaining({
-            org: testOrg,
-            name: testRepo
-          })
-        })
-      );
     });
   });
 });

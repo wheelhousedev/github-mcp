@@ -1,49 +1,52 @@
-# github-manager MCP Server
+# GitHub Manager MCP Server
 
-A Model Context Protocol server
+A Model Context Protocol server for GitHub management
 
-This is a TypeScript-based MCP server that implements a simple notes system. It demonstrates core MCP concepts by providing:
-
-- Resources representing text notes with URIs and metadata
-- Tools for creating new notes
-- Prompts for generating summaries of notes
+This TypeScript-based MCP server provides tools for managing GitHub organizations, repositories, and collaborators through the GitHub API.
 
 ## Features
 
-### Resources
-- List and access notes via `note://` URIs
-- Each note has a title, content and metadata
-- Plain text mime type for simple content access
-
-### Tools
-- `create_note` - Create new text notes
-  - Takes title and content as required parameters
-  - Stores note in server state
-
-### Prompts
-- `summarize_notes` - Generate a summary of all stored notes
-  - Includes all note contents as embedded resources
-  - Returns structured prompt for LLM summarization
+### GitHub Management Tools
+- `list_orgs`: List GitHub organizations the authenticated user belongs to
+- `list_repos`: List repositories in a specified organization
+- `create_repo`: Create a new repository in an organization
+- `add_collaborator`: Add a collaborator to a repository
+- `update_repo_settings`: Update repository settings
 
 ## Development
 
-Install dependencies:
+### Installation
 ```bash
 npm install
 ```
 
-Build the server:
+### Build
 ```bash
 npm run build
 ```
 
-For development with auto-rebuild:
+### Development with Auto-rebuild
 ```bash
 npm run watch
 ```
 
-## Installation
+### Testing
+Run unit tests:
+```bash
+npm test
+```
 
+Run tests with coverage:
+```bash
+npm run test:coverage
+```
+
+## Configuration
+
+### Environment Variables
+- `GITHUB_TOKEN`: GitHub personal access token with required scopes
+
+### MCP Server Installation
 To use with Claude Desktop, add the server config:
 
 On MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -53,15 +56,18 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 {
   "mcpServers": {
     "github-manager": {
-      "command": "/path/to/github-manager/build/index.js"
+      "command": "/path/to/github-manager/build/index.js",
+      "env": {
+        "GITHUB_TOKEN": "your_github_token_here"
+      }
     }
   }
 }
 ```
 
-### Debugging
+## Debugging
 
-Since MCP servers communicate over stdio, debugging can be challenging. We recommend using the [MCP Inspector](https://github.com/modelcontextprotocol/inspector), which is available as a package script:
+We recommend using the [MCP Inspector](https://github.com/modelcontextprotocol/inspector), which is available as a package script:
 
 ```bash
 npm run inspector

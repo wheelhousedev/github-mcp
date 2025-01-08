@@ -28,7 +28,8 @@ export class AddCollaboratorService extends BaseGitHubService {
           ErrorCode.InternalError,
           'Organization, repository, username, and permission are required',
           {
-            action: 'add_collaborator'
+            action: 'add_collaborator',
+            attempted_operation: 'validate_input'
           }
         );
       }
@@ -40,17 +41,15 @@ export class AddCollaboratorService extends BaseGitHubService {
           'Invalid permission level',
           {
             action: 'add_collaborator',
+            attempted_operation: 'validate_input',
             collaborator: {
-              permission: params.permission,
-              username: params.username,
-              org: params.org,
-              repo: params.repo
+              permission: params.permission
             }
           }
         );
       }
 
-      this.logOperation('add_collaborator', {
+      this.logger.debug('Executing add_collaborator', {
         org: params.org,
         repo: params.repo,
         username: params.username,
@@ -68,11 +67,6 @@ export class AddCollaboratorService extends BaseGitHubService {
         permission: params.permission
       });
 
-      // Log rate limit information
-      this.logger.debug('Rate limit info',
-        this.getRateLimitInfo(response.headers as Record<string, string>)
-      );
-
       // Transform the GitHub API response to match our interface
       const result: GitHubCollaborator = {
         status: 'active',
@@ -87,27 +81,28 @@ export class AddCollaboratorService extends BaseGitHubService {
       this.logger.info('Successfully added collaborator', {
         org: params.org,
         repo: params.repo,
-        username: params.username,
-        permission: params.permission
+        username: params.username
       });
 
       return result;
     } catch (error: any) {
-      // For GitHub API errors, transform to our error format
       const errorDetails = {
         action: 'add_collaborator',
         attempted_operation: 'add_collaborator',
         organization: params?.org,
         collaborator: {
           username: params?.username,
-          permission: params?.permission,
-          org: params?.org,
-          repo: params?.repo
+          permission: params?.permission
         }
       };
 
-      if (error.status === 403 && error.message.includes('rate limit')) {
-        const rateLimitInfo = this.getRateLimitInfo(error.response?.headers || {});
+      if (error instanceof McpError) {
+        throw error;
+      }
+
+      // Handle rate limit errors
+      if (error.status === 403 && error.response?.data?.message?.includes('rate limit')) {
+        const rateLimitInfo = this.getRateLimitInfo(error.response.headers);
         throw new McpError(
           ErrorCode.InternalError,
           'API rate limit exceeded',
@@ -118,8 +113,26 @@ export class AddCollaboratorService extends BaseGitHubService {
         );
       }
 
-      // For network errors
-      if (error.message.includes('Network')) {
+      // Handle user not found errors
+      if (error.status === 404) {
+        throw new McpError(
+          ErrorCode.InternalError,
+          'Not Found',
+          {
+            ...errorDetails,
+            collaborator: {
+              username: params?.username
+            }
+          }
+        );
+      }
+
+      // Handle network errors
+      if (error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT' || error.message?.includes('Network')) {
+        this.logger.error('Network error occurred', {
+          ...errorDetails,
+          error: error.message
+        });
         throw new McpError(
           ErrorCode.InternalError,
           'Network error',
@@ -127,11 +140,7 @@ export class AddCollaboratorService extends BaseGitHubService {
         );
       }
 
-      // For other GitHub API errors
-      if (error instanceof McpError) {
-        throw error;
-      }
-
+      // Default error handling
       throw new McpError(
         ErrorCode.InternalError,
         error.message || 'Failed to add collaborator',

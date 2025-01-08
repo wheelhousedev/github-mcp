@@ -77,22 +77,26 @@ describe('ListOrgsService', () => {
 
     it('should handle rate limit errors', async () => {
       // Given
-      mockOctokit.orgs.listForAuthenticatedUser.mockRejectedValue(
-        createRateLimitError()
-      );
+      mockAuthService.verifyAuthAndScopes.mockResolvedValue(undefined);
+      const rateLimitError = createRateLimitError();
+      mockOctokit.orgs.listForAuthenticatedUser.mockRejectedValue(rateLimitError);
 
       // When/Then
-      await expect(service.execute()).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('API rate limit exceeded'),
-        details: expect.objectContaining({
-          action: 'list_organizations',
-          attempted_operation: 'list_orgs',
-          rate_limit: expect.objectContaining({
-            remaining: '0',
-            reset: '1609459200'
-          })
-        })
+      const error = await service.execute().catch(e => e);
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.details).toMatchObject({
+        action: 'list_organizations',
+        attempted_operation: 'list_orgs',
+        originalError: {
+          message: 'API rate limit exceeded',
+          status: 403,
+          response: {
+            headers: {
+              'x-ratelimit-remaining': '0',
+              'x-ratelimit-reset': '1609459200'
+            }
+          }
+        }
       });
       expect(mockLogger.error).toHaveBeenCalledWith(
         'Rate limit exceeded',
@@ -109,18 +113,19 @@ describe('ListOrgsService', () => {
 
     it('should handle network errors', async () => {
       // Given
-      // Use plain Error for network errors
+      mockAuthService.verifyAuthAndScopes.mockResolvedValue(undefined);
       const networkError = new Error('Network error');
       mockOctokit.orgs.listForAuthenticatedUser.mockRejectedValue(networkError);
 
       // When/Then
-      await expect(service.execute()).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Network error'),
-        details: expect.objectContaining({
-          action: 'list_organizations',
-          attempted_operation: 'list_orgs'
-        })
+      const error = await service.execute().catch(e => e);
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.details).toMatchObject({
+        action: 'list_organizations',
+        attempted_operation: 'list_orgs',
+        originalError: {
+          message: 'Network error'
+        }
       });
     });
   });

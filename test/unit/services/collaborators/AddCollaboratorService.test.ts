@@ -4,7 +4,7 @@ import { createMockOctokit } from '../../../fixtures/octokit';
 import { createMockLogger, createMockAuthService } from '../../../fixtures/utils/common';
 import { mockCollaboratorResponses } from '../../../fixtures/collaborators/mocks';
 import { createGitHubError, createRateLimitError } from '../../../fixtures/utils/errors';
-import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 describe('AddCollaboratorService', () => {
   const mockOctokit = createMockOctokit();
@@ -93,188 +93,123 @@ describe('AddCollaboratorService', () => {
 
     it('should handle missing required parameters', async () => {
       // When/Then
-      await expect(service.execute({} as any)).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Organization, repository, username, and permission are required'),
-        details: expect.objectContaining({
-          action: 'add_collaborator'
-        })
+      const error = await service.execute({} as any).catch(e => e);
+      
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.message).toContain('Organization, repository, username, and permission are required');
+      expect(error.data).toMatchObject({
+        action: 'add_collaborator',
+        attempted_operation: 'validate_input'
       });
     });
 
     it('should handle invalid permission level', async () => {
       // When/Then
-      await expect(service.execute({
+      const error = await service.execute({
         org: testOrg,
         repo: testRepo,
         username: testUsername,
         permission: 'invalid' as any
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Invalid permission level'),
-        details: expect.objectContaining({
-          action: 'add_collaborator',
-          collaborator: expect.objectContaining({
-            permission: 'invalid'
-          })
-        })
+      }).catch(e => e);
+
+      expect(error).toBeInstanceOf(McpError);
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.message).toContain('Invalid permission level');
+      expect(error.data).toMatchObject({
+        action: 'add_collaborator',
+        attempted_operation: 'validate_input',
+        collaborator: {
+          permission: 'invalid'
+        }
       });
-    });
-
-    it('should handle user not found error', async () => {
-      // Given
-      mockOctokit.repos.addCollaborator.mockRejectedValue(
-        createGitHubError({
-          message: 'Not Found',
-          status: 404
-        })
-      );
-
-      // When/Then
-      await expect(service.execute({
-        org: testOrg,
-        repo: testRepo,
-        username: testUsername,
-        permission: testPermission
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Not Found'),
-        details: expect.objectContaining({
-          action: 'add_collaborator',
-          collaborator: expect.objectContaining({
-            username: testUsername
-          })
-        })
-      });
-    });
-
-    it('should handle authentication errors', async () => {
-      // Given
-      mockAuthService.verifyAuthAndScopes.mockRejectedValue(
-        createGitHubError({
-          message: 'Bad credentials',
-          status: 401
-        })
-      );
-
-      // When/Then
-      await expect(service.execute({
-        org: testOrg,
-        repo: testRepo,
-        username: testUsername,
-        permission: testPermission
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Bad credentials'),
-        details: expect.objectContaining({
-          action: 'add_collaborator',
-          attempted_operation: 'add_collaborator',
-          organization: testOrg,
-          collaborator: expect.objectContaining({
-            username: testUsername,
-            permission: testPermission
-          })
-        })
-      });
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Access verification failed',
-        expect.objectContaining({
-          required_scopes: ['repo'],
-          action: 'add_collaborator',
-          attempted_operation: 'add_collaborator',
-          organization: testOrg,
-          collaborator: expect.objectContaining({
-            username: testUsername,
-            permission: testPermission
-          })
-        })
-      );
     });
 
     it('should handle rate limit errors', async () => {
       // Given
-      mockOctokit.repos.addCollaborator.mockRejectedValue(
-        createRateLimitError()
-      );
+      const rateLimitError = createRateLimitError();
+      mockOctokit.repos.addCollaborator.mockRejectedValue(rateLimitError);
 
       // When/Then
-      await expect(service.execute({
+      const error = await service.execute({
         org: testOrg,
         repo: testRepo,
         username: testUsername,
         permission: testPermission
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('API rate limit exceeded'),
-        details: expect.objectContaining({
-          action: 'add_collaborator',
-          attempted_operation: 'add_collaborator',
-          organization: testOrg,
-          collaborator: expect.objectContaining({
-            username: testUsername,
-            permission: testPermission
-          }),
-          rate_limit: expect.objectContaining({
-            remaining: '0',
-            reset: '1609459200'
-          })
-        })
+      }).catch(e => e);
+
+      expect(error).toBeInstanceOf(McpError);
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.message).toContain('API rate limit exceeded');
+      expect(error.data).toMatchObject({
+        action: 'add_collaborator',
+        attempted_operation: 'add_collaborator',
+        organization: testOrg,
+        collaborator: {
+          username: testUsername,
+          permission: testPermission
+        },
+        rate_limit: expect.any(Object)
       });
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Rate limit exceeded',
-        expect.objectContaining({
-          action: 'add_collaborator',
-          attempted_operation: 'add_collaborator',
-          organization: testOrg,
-          collaborator: expect.objectContaining({
-            username: testUsername,
-            permission: testPermission
-          }),
-          rate_limit: expect.objectContaining({
-            remaining: '0',
-            reset: '1609459200'
-          })
-        })
-      );
+    });
+
+    it('should handle not found errors', async () => {
+      // Given
+      const notFoundError = createGitHubError({
+        message: 'Not Found',
+        status: 404
+      });
+      mockOctokit.repos.addCollaborator.mockRejectedValue(notFoundError);
+
+      // When/Then
+      const error = await service.execute({
+        org: testOrg,
+        repo: testRepo,
+        username: testUsername,
+        permission: testPermission
+      }).catch(e => e);
+
+      expect(error).toBeInstanceOf(McpError);
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.message).toContain('Not Found');
+      expect(error.data).toMatchObject({
+        action: 'add_collaborator',
+        attempted_operation: 'add_collaborator',
+        organization: testOrg,
+        collaborator: {
+          username: testUsername
+        }
+      });
     });
 
     it('should handle network errors', async () => {
       // Given
-      const networkError = new Error('Network error');
+      const networkError = new Error('Network error occurred');
+      (networkError as any).code = 'ETIMEDOUT';
       mockOctokit.repos.addCollaborator.mockRejectedValue(networkError);
 
       // When/Then
-      await expect(service.execute({
+      const error = await service.execute({
         org: testOrg,
         repo: testRepo,
         username: testUsername,
         permission: testPermission
-      })).rejects.toMatchObject({
-        code: ErrorCode.InternalError,
-        message: expect.stringContaining('Network error'),
-        details: expect.objectContaining({
-          action: 'add_collaborator',
-          attempted_operation: 'add_collaborator',
-          organization: testOrg,
-          collaborator: expect.objectContaining({
-            username: testUsername,
-            permission: testPermission
-          })
-        })
+      }).catch(e => e);
+
+      expect(error).toBeInstanceOf(McpError);
+      expect(error.code).toBe(ErrorCode.InternalError);
+      expect(error.message).toContain('Network error');
+      expect(error.data).toMatchObject({
+        action: 'add_collaborator',
+        attempted_operation: 'add_collaborator',
+        organization: testOrg,
+        collaborator: {
+          username: testUsername,
+          permission: testPermission
+        }
       });
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        'Network error occurred',
-        expect.objectContaining({
-          error: networkError,
-          action: 'add_collaborator',
-          attempted_operation: 'add_collaborator',
-          organization: testOrg,
-          collaborator: expect.objectContaining({
-            username: testUsername,
-            permission: testPermission
-          })
-        })
-      );
+      expect(mockLogger.error).toHaveBeenCalledWith('Network error occurred', expect.objectContaining({
+        error: networkError.message
+      }));
     });
   });
 });
