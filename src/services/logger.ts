@@ -26,9 +26,12 @@ export class McpLogger implements Logger {
     
     // Console output with proper formatting
     const formattedMessage = `[${logMessage.timestamp}] ${level.toUpperCase()}: ${message}`;
-    console.error(formattedMessage);
+    
+    // Use appropriate console method based on log level
+    const consoleMethod = (level === 'error' || level === 'warn') ? console.error : console.log;
+    consoleMethod(formattedMessage);
     if (data) {
-      console.error(JSON.stringify(data, null, 2));
+      consoleMethod(JSON.stringify(data, null, 2));
     }
 
     // Send to MCP if initialized and error/warning
