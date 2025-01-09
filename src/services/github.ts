@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/rest';
+import fetch from 'node-fetch';
 import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { GitHubCollaborator, GitHubError, GitHubOrg, GitHubRepo, GitHubRepoSettings, GitHubService, Logger } from '../types.js';
 import { createValidationError } from './error/errorUtils.js';
@@ -14,7 +15,10 @@ export class OctokitGitHubService implements GitHubService {
 
     this.logger = logger;
     this.octokit = new Octokit({
-      auth: token
+      auth: token,
+      request: {
+        fetch: fetch as any
+      }
     });
 
     this.logger.debug('GitHub service initialized');

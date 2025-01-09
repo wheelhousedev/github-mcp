@@ -16,6 +16,7 @@ import { AddCollaboratorService, AddCollaboratorInput } from './services/collabo
 import { UpdateRepoSettingsService, UpdateRepoSettingsInput } from './services/repositories/UpdateRepoSettingsService.js';
 import { GitHubRepoSettings } from './types.js';
 import { Octokit } from '@octokit/rest';
+import fetch from 'node-fetch';
 
 export class GitHubManager {
   private server: Server;
@@ -60,7 +61,12 @@ export class GitHubManager {
     this.logger.setServer(this.server);
 
     // Initialize Octokit and auth service
-    this.octokit = new Octokit({ auth: token });
+    this.octokit = new Octokit({
+      auth: token,
+      request: {
+        fetch: fetch as any
+      }
+    });
     this.authService = new GitHubAuthService(this.octokit);
 
     // Initialize services

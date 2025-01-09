@@ -11,7 +11,8 @@
     "build"
   ],
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "clean": "rm -rf build",
+    "build": "npm run clean && tsc && node --input-type=module -e \"import { chmodSync } from 'fs'; chmodSync('build/index.js', '755');\"",
     "prepare": "npm run build",
     "watch": "tsc --watch",
     "inspector": "npx @modelcontextprotocol/inspector build/index.js",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.24",
+    "@types/node-fetch": "^2.6.12",
     "@vitest/coverage-v8": "^2.1.8",
     "typescript": "^5.3.3",
     "vitest": "^2.1.8"
